@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { supabase } from "./lib/supabase";
 
 const MONTHS = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
 const MONTHS_FULL = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
@@ -10,55 +11,16 @@ const MOMENT_CONFIG = {
   night:     { label: "Noche",   emoji: "🌙",  color: "#C8F55A" },
 };
 
-// Mock data across 4 months
 const TODAY = new Date();
-function buildMockLogs() {
-  const data = {};
-  // Current month
-  [1,3,4,7,8,9,12,15,16,17,18,22,23].forEach(d => {
-    const date = new Date(TODAY.getFullYear(), TODAY.getMonth(), d);
-    data[date.toDateString()] = { smoked:true, moments:[["morning","night"],["afternoon"],["morning","afternoon","night"],["night"],["morning"]][d%5], company: d%2===0?"solo":"acompañado" };
-  });
-  // Previous 3 months
-  [[22,[2,5,6,8,10,12,14,15,17,18,19,20,21,22,24,25,26,27,28,29,30]],
-   [18,[1,2,4,6,8,10,12,14,16,18,20,22,24,26,28,30]],
-   [13,[3,6,9,12,15,18,21,24,27,30]]
-  ].forEach(([,days], mi) => {
-    const m = TODAY.getMonth() - (mi+1);
-    const y = m < 0 ? TODAY.getFullYear()-1 : TODAY.getFullYear();
-    const realM = ((m % 12) + 12) % 12;
-    days.forEach(d => {
-      try {
-        const date = new Date(y, realM, d);
-        if (date.getMonth() === realM)
-          data[date.toDateString()] = { smoked:true, moments:[["morning"],["night"],["afternoon","night"]][d%3], company: d%2===0?"solo":"acompañado" };
-      } catch(e) {}
-    });
-  });
-  return data;
+
+function isoToDateStr(iso) {
+  return new Date(iso + 'T12:00:00').toDateString();
 }
 
-const MOCK_LOGS = buildMockLogs();
-
-function buildMockPurchases() {
-  const p = [];
-  for (let mi = 0; mi < 4; mi++) {
-    const m = TODAY.getMonth() - mi;
-    const y = m < 0 ? TODAY.getFullYear()-1 : TODAY.getFullYear();
-    const realM = ((m%12)+12)%12;
-    const amounts = [[80000,120000],[100000,150000],[90000],[200000]][mi];
-    const days = [[2,14],[3,17],[5],[1]][mi];
-    days.forEach((d,i) => {
-      try {
-        const date = new Date(y, realM, d);
-        if (date.getMonth()===realM) p.push({ id: mi*10+i, date: date.toDateString(), amount: amounts[i] });
-      } catch(e){}
-    });
-  }
-  return p;
+function dateStrToISO(dateStr) {
+  const d = new Date(dateStr);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
-
-const MOCK_PURCHASES = buildMockPurchases();
 
 function formatCOP(n) { return "$" + Math.abs(n).toLocaleString("es-CO"); }
 
@@ -93,11 +55,14 @@ const primaryBtn = { width:"100%", padding:"17px", background:"#C8F55A", border:
 
 // ─── ROOT ─────────────────────────────────────────────────────────────────────
 export default function Mindose() {
-  const [screen, setScreen] = useState("login");
+  const [screen, setScreen] = useState("loading");
+  const [user, setUser] = useState(null);
   const [authForm, setAuthForm] = useState({ email:"", password:"", name:"" });
+  const [authError, setAuthError] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
   const [appView, setAppView] = useState("home");
-  const [logs, setLogs] = useState(MOCK_LOGS);
-  const [purchases, setPurchases] = useState(MOCK_PURCHASES);
+  const [logs, setLogs] = useState({});
+  const [purchases, setPurchases] = useState([]);
   const [modal, setModal] = useState(null);
   const [draft, setDraft] = useState({ moments:[], company:null });
   const [purchaseDraft, setPurchaseDraft] = useState("");
@@ -106,6 +71,88 @@ export default function Mindose() {
 
   useEffect(() => { setTimeout(()=>setMounted(true), 60); }, []);
 
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        setUser(session.user);
+        setScreen("app");
+      } else {
+        setScreen("login");
+      }
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        setUser(session.user);
+        setScreen("app");
+      } else {
+        setUser(null);
+        setScreen("login");
+        setLogs({});
+        setPurchases([]);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    fetchLogs(user.id);
+    fetchPurchases(user.id);
+  }, [user]);
+
+  async function fetchLogs(userId) {
+    const { data } = await supabase
+      .from('logs')
+      .select('*')
+      .eq('user_id', userId);
+    if (data) {
+      const map = {};
+      data.forEach(row => {
+        map[isoToDateStr(row.date)] = { smoked: true, moments: row.moments, company: row.company, id: row.id };
+      });
+      setLogs(map);
+    }
+  }
+
+  async function fetchPurchases(userId) {
+    const { data } = await supabase
+      .from('purchases')
+      .select('*')
+      .eq('user_id', userId);
+    if (data) {
+      setPurchases(data.map(row => ({
+        id: row.id,
+        date: isoToDateStr(row.date),
+        amount: row.amount,
+      })));
+    }
+  }
+
+  async function handleLogin() {
+    setAuthError("");
+    setAuthLoading(true);
+    const { error } = await supabase.auth.signInWithPassword({
+      email: authForm.email,
+      password: authForm.password,
+    });
+    setAuthLoading(false);
+    if (error) setAuthError(error.message);
+  }
+
+  async function handleSignup() {
+    setAuthError("");
+    setAuthLoading(true);
+    const { error } = await supabase.auth.signUp({
+      email: authForm.email,
+      password: authForm.password,
+      options: { data: { name: authForm.name } },
+    });
+    setAuthLoading(false);
+    if (error) setAuthError(error.message);
+  }
+
   const todayStr = TODAY.toDateString();
   const todayLog = logs[todayStr];
   const smokedToday = todayLog?.smoked;
@@ -113,7 +160,6 @@ export default function Mindose() {
 
   const thisMonth = getMonthStats(logs, purchases, TODAY.getFullYear(), TODAY.getMonth());
 
-  // Build chart data from last 4 months
   const chartData = Array.from({length:4},(_,i)=>{
     const m = TODAY.getMonth()-i; const y = m<0?TODAY.getFullYear()-1:TODAY.getFullYear(); const realM=((m%12)+12)%12;
     const s = getMonthStats(logs, purchases, y, realM);
@@ -124,20 +170,55 @@ export default function Mindose() {
     setDraft(d => ({ ...d, moments: d.moments.includes(m)?d.moments.filter(x=>x!==m):[...d.moments,m] }));
   }
 
-  function confirmConsume() {
+  async function confirmConsume() {
     if (!draft.moments.length || !draft.company) return;
-    setLogs(prev => ({ ...prev, [todayStr]:{ smoked:true, moments:draft.moments, company:draft.company } }));
+    const isoDate = dateStrToISO(todayStr);
+    const existing = logs[todayStr];
+
+    if (existing?.id) {
+      const { data, error } = await supabase
+        .from('logs')
+        .update({ moments: draft.moments, company: draft.company })
+        .eq('id', existing.id)
+        .select()
+        .single();
+      if (!error && data) {
+        setLogs(prev => ({ ...prev, [todayStr]: { smoked: true, moments: data.moments, company: data.company, id: data.id } }));
+      }
+    } else {
+      const { data, error } = await supabase
+        .from('logs')
+        .insert({ user_id: user.id, date: isoDate, moments: draft.moments, company: draft.company })
+        .select()
+        .single();
+      if (!error && data) {
+        setLogs(prev => ({ ...prev, [todayStr]: { smoked: true, moments: data.moments, company: data.company, id: data.id } }));
+      }
+    }
     setModal(null);
   }
 
-  function confirmPurchase() {
+  async function confirmPurchase() {
     const amt = parseInt(purchaseDraft.replace(/\D/g,""));
     if (!amt) return;
-    setPurchases(prev => [...prev, { id:Date.now(), date:todayStr, amount:amt }]);
-    setPurchaseDraft(""); setModal(null);
+    const isoDate = dateStrToISO(todayStr);
+    const { data, error } = await supabase
+      .from('purchases')
+      .insert({ user_id: user.id, date: isoDate, amount: amt })
+      .select()
+      .single();
+    if (!error && data) {
+      setPurchases(prev => [...prev, { id: data.id, date: isoToDateStr(data.date), amount: data.amount }]);
+    }
+    setPurchaseDraft("");
+    setModal(null);
   }
 
-  function removeToday() {
+  async function removeToday() {
+    const existing = logs[todayStr];
+    if (existing?.id) {
+      await supabase.from('logs').delete().eq('id', existing.id);
+    }
     setLogs(prev => { const n={...prev}; delete n[todayStr]; return n; });
   }
 
@@ -169,8 +250,13 @@ export default function Mindose() {
         </div>
 
         <div style={{ flex:1, overflowY:"auto" }}>
-          {screen==="login" && <LoginScreen authForm={authForm} setAuthForm={setAuthForm} setScreen={setScreen} />}
-          {screen==="signup" && <SignupScreen authForm={authForm} setAuthForm={setAuthForm} setScreen={setScreen} />}
+          {screen==="loading" && (
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"center", minHeight:760 }}>
+              <span style={{ color:"rgba(255,255,255,0.2)", fontSize:14 }}>Cargando…</span>
+            </div>
+          )}
+          {screen==="login" && <LoginScreen authForm={authForm} setAuthForm={setAuthForm} authError={authError} authLoading={authLoading} onLogin={handleLogin} setScreen={(s)=>{ setAuthError(""); setScreen(s); }} />}
+          {screen==="signup" && <SignupScreen authForm={authForm} setAuthForm={setAuthForm} authError={authError} authLoading={authLoading} onSignup={handleSignup} setScreen={(s)=>{ setAuthError(""); setScreen(s); }} />}
           {screen==="app" && (
             <>
               {appView==="home" && <HomeView today={TODAY} smokedToday={smokedToday} todayLog={todayLog} thisMonth={thisMonth} cleanDaysThisWeek={cleanDaysThisWeek} chartData={chartData} openConsume={()=>{setDraft({moments:[],company:null});setModal("consume");}} openPurchase={()=>{setPurchaseDraft("");setModal("purchase");}} removeToday={removeToday} setAppView={setAppView} />}
@@ -199,7 +285,7 @@ export default function Mindose() {
 }
 
 // ─── AUTH ─────────────────────────────────────────────────────────────────────
-function LoginScreen({ authForm, setAuthForm, setScreen }) {
+function LoginScreen({ authForm, setAuthForm, authError, authLoading, onLogin, setScreen }) {
   return (
     <div style={{ flex:1, display:"flex", flexDirection:"column", justifyContent:"center", padding:"0 32px", minHeight:760 }}>
       <div style={{ marginBottom:48 }}>
@@ -211,9 +297,10 @@ function LoginScreen({ authForm, setAuthForm, setScreen }) {
       </div>
       <div style={{ display:"flex", flexDirection:"column", gap:12, marginBottom:24 }}>
         <input placeholder="Correo" value={authForm.email} onChange={e=>setAuthForm(f=>({...f,email:e.target.value}))} style={inputStyle} />
-        <input placeholder="Contraseña" type="password" value={authForm.password} onChange={e=>setAuthForm(f=>({...f,password:e.target.value}))} style={inputStyle} />
+        <input placeholder="Contraseña" type="password" value={authForm.password} onChange={e=>setAuthForm(f=>({...f,password:e.target.value}))} onKeyDown={e=>e.key==="Enter"&&onLogin()} style={inputStyle} />
       </div>
-      <button onClick={()=>setScreen("app")} style={primaryBtn}>Entrar</button>
+      {authError && <p style={{ color:"#FF6B6B", fontSize:13, margin:"0 0 14px", textAlign:"center" }}>{authError}</p>}
+      <button onClick={onLogin} disabled={authLoading} style={{ ...primaryBtn, opacity:authLoading?0.6:1 }}>{authLoading?"Entrando…":"Entrar"}</button>
       <button onClick={()=>setScreen("signup")} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.35)", fontSize:14, cursor:"pointer", marginTop:20, padding:8, fontFamily:"inherit" }}>
         ¿No tienes cuenta? <span style={{ color:"#C8F55A", fontWeight:700 }}>Créala aquí</span>
       </button>
@@ -221,7 +308,7 @@ function LoginScreen({ authForm, setAuthForm, setScreen }) {
   );
 }
 
-function SignupScreen({ authForm, setAuthForm, setScreen }) {
+function SignupScreen({ authForm, setAuthForm, authError, authLoading, onSignup, setScreen }) {
   return (
     <div style={{ flex:1, display:"flex", flexDirection:"column", justifyContent:"center", padding:"0 32px", minHeight:760 }}>
       <button onClick={()=>setScreen("login")} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.3)", fontSize:22, cursor:"pointer", padding:0, marginBottom:28, textAlign:"left", fontFamily:"inherit" }}>←</button>
@@ -237,7 +324,8 @@ function SignupScreen({ authForm, setAuthForm, setScreen }) {
         <input placeholder="Correo" value={authForm.email} onChange={e=>setAuthForm(f=>({...f,email:e.target.value}))} style={inputStyle} />
         <input placeholder="Contraseña" type="password" value={authForm.password} onChange={e=>setAuthForm(f=>({...f,password:e.target.value}))} style={inputStyle} />
       </div>
-      <button onClick={()=>setScreen("app")} style={primaryBtn}>Crear cuenta</button>
+      {authError && <p style={{ color:"#FF6B6B", fontSize:13, margin:"0 0 14px", textAlign:"center" }}>{authError}</p>}
+      <button onClick={onSignup} disabled={authLoading} style={{ ...primaryBtn, opacity:authLoading?0.6:1 }}>{authLoading?"Creando…":"Crear cuenta"}</button>
     </div>
   );
 }
