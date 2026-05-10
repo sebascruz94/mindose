@@ -249,6 +249,30 @@ export default function Mindose() {
     }
   }
 
+  async function addLogForDate(dateStr, moments, company) {
+    const isoDate = dateStrToISO(dateStr);
+    const { data, error } = await supabase
+      .from('logs')
+      .insert({ user_id: user.id, date: isoDate, moments, company })
+      .select()
+      .single();
+    if (!error && data) {
+      setLogs(prev => ({ ...prev, [dateStr]: { smoked: true, moments: data.moments, company: data.company, id: data.id } }));
+    }
+  }
+
+  async function addPurchaseForDate(dateStr, amount) {
+    const isoDate = dateStrToISO(dateStr);
+    const { data, error } = await supabase
+      .from('purchases')
+      .insert({ user_id: user.id, date: isoDate, amount })
+      .select()
+      .single();
+    if (!error && data) {
+      setPurchases(prev => [...prev, { id: data.id, date: isoToDateStr(data.date), amount: data.amount }]);
+    }
+  }
+
   async function removeToday() {
     deleteLog(logs[todayStr]?.id, todayStr);
   }
@@ -325,6 +349,8 @@ export default function Mindose() {
             onUpdateLog={updateLog}
             onDeletePurchase={deletePurchase}
             onUpdatePurchase={updatePurchase}
+            onAddLog={addLogForDate}
+            onAddPurchase={addPurchaseForDate}
             onClose={()=>{ setModal(null); setDayDetail(null); }}
           />
         </BottomSheet>
@@ -544,9 +570,9 @@ function TrackingView({ trackingDate, trackingStats, trackingCells, logs, purcha
           const isFuture = date > today;
           const mainColor = log ? MOMENT_CONFIG[log.moments?.[0]]?.color || "#C8F55A" : null;
 
-          const hasData = (!!log || hasPurchase) && !isFuture;
+          const isClickable = !isFuture;
           return (
-            <div key={i} onClick={hasData ? () => onDayPress(date.toDateString()) : undefined} style={{ aspectRatio:"1", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", borderRadius:12, background:log?`${mainColor}18`:isToday?"rgba(255,255,255,0.07)":"transparent", border:isToday?"1px solid rgba(255,255,255,0.18)":log?`1px solid ${mainColor}35`:"1px solid transparent", gap:1, cursor:hasData?"pointer":"default", transition:"opacity 0.15s", WebkitTapHighlightColor:"transparent" }}>
+            <div key={i} onClick={isClickable ? () => onDayPress(date.toDateString()) : undefined} style={{ aspectRatio:"1", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", borderRadius:12, background:log?`${mainColor}18`:isToday?"rgba(255,255,255,0.07)":"transparent", border:isToday?"1px solid rgba(255,255,255,0.18)":log?`1px solid ${mainColor}35`:"1px solid transparent", gap:1, cursor:isClickable?"pointer":"default", transition:"opacity 0.15s", WebkitTapHighlightColor:"transparent" }}>
               <span style={{ fontSize:13, fontWeight:isToday?800:500, color:isFuture?"rgba(255,255,255,0.1)":log?mainColor:"rgba(255,255,255,0.55)" }}>{day}</span>
               {hasPurchase && <span style={{ fontSize:6, lineHeight:1 }}>💰</span>}
               {log && log.moments?.length > 1 && <span style={{ fontSize:6, color:mainColor, lineHeight:1 }}>●●</span>}
@@ -725,16 +751,12 @@ function PurchaseModal({ value, setValue, confirm }) {
 }
 
 // ─── DAY DETAIL SHEET ─────────────────────────────────────────────────────────
-function DayDetailSheet({ dateStr, log, dayPurchases, onDeleteLog, onUpdateLog, onDeletePurchase, onUpdatePurchase, onClose }) {
+function DayDetailSheet({ dateStr, log, dayPurchases, onDeleteLog, onUpdateLog, onDeletePurchase, onUpdatePurchase, onAddLog, onAddPurchase, onClose }) {
   const [mode, setMode] = useState("view");
-  const [logDraft, setLogDraft] = useState(log ? { moments: [...log.moments], company: log.company } : { moments: [], company: null });
+  const [logDraft, setLogDraft] = useState({ moments: log?.moments ? [...log.moments] : [], company: log?.company || null });
   const [editingPurchaseId, setEditingPurchaseId] = useState(null);
   const [purchaseAmountDraft, setPurchaseAmountDraft] = useState("");
   const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    if (mode === "view" && !log && dayPurchases.length === 0) onClose();
-  }, [log, dayPurchases, mode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (log) setLogDraft({ moments: [...log.moments], company: log.company });
@@ -752,7 +774,11 @@ function DayDetailSheet({ dateStr, log, dayPurchases, onDeleteLog, onUpdateLog, 
   async function handleSaveLog() {
     if (!logDraft.moments.length || !logDraft.company) return;
     setSaving(true);
-    await onUpdateLog(log.id, dateStr, logDraft.moments, logDraft.company);
+    if (log) {
+      await onUpdateLog(log.id, dateStr, logDraft.moments, logDraft.company);
+    } else {
+      await onAddLog(dateStr, logDraft.moments, logDraft.company);
+    }
     setSaving(false);
     setMode("view");
   }
@@ -761,8 +787,13 @@ function DayDetailSheet({ dateStr, log, dayPurchases, onDeleteLog, onUpdateLog, 
     const amt = parseInt(purchaseAmountDraft.replace(/\D/g, ""));
     if (!amt) return;
     setSaving(true);
-    await onUpdatePurchase(editingPurchaseId, amt);
+    if (editingPurchaseId) {
+      await onUpdatePurchase(editingPurchaseId, amt);
+    } else {
+      await onAddPurchase(dateStr, amt);
+    }
     setSaving(false);
+    setPurchaseAmountDraft("");
     setMode("view");
   }
 
@@ -780,11 +811,12 @@ function DayDetailSheet({ dateStr, log, dayPurchases, onDeleteLog, onUpdateLog, 
 
   if (mode === "editLog") {
     const canSave = logDraft.moments.length > 0 && logDraft.company;
+    const isAdding = !log;
     return (
       <>
         <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:20 }}>
-          <button onClick={() => setMode("view")} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.3)", fontSize:22, cursor:"pointer", padding:0, fontFamily:"inherit" }}>←</button>
-          <p style={{ color:"rgba(255,255,255,0.4)", fontSize:13, fontWeight:600, margin:0 }}>Editar consumo · {dateLabel}</p>
+          <button onClick={() => { setMode("view"); setLogDraft({ moments: log?.moments ? [...log.moments] : [], company: log?.company || null }); }} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.3)", fontSize:22, cursor:"pointer", padding:0, fontFamily:"inherit" }}>←</button>
+          <p style={{ color:"rgba(255,255,255,0.4)", fontSize:13, fontWeight:600, margin:0 }}>{isAdding ? "Agregar consumo" : "Editar consumo"} · {dateLabel}</p>
         </div>
         <div style={{ display:"flex", flexDirection:"column", gap:8, marginBottom:18 }}>
           {Object.entries(MOMENT_CONFIG).map(([key, cfg]) => {
@@ -809,26 +841,27 @@ function DayDetailSheet({ dateStr, log, dayPurchases, onDeleteLog, onUpdateLog, 
             );
           })}
         </div>
-        <button onClick={handleSaveLog} disabled={!canSave || saving} style={{ ...primaryBtn, opacity:canSave&&!saving?1:0.35, cursor:canSave&&!saving?"pointer":"default" }}>{saving?"Guardando…":"Guardar cambios"}</button>
+        <button onClick={handleSaveLog} disabled={!canSave || saving} style={{ ...primaryBtn, opacity:canSave&&!saving?1:0.35, cursor:canSave&&!saving?"pointer":"default" }}>{saving?"Guardando…": isAdding ? "Guardar" : "Guardar cambios"}</button>
       </>
     );
   }
 
   if (mode === "editPurchase") {
     const canSave = purchaseAmountDraft && parseInt(purchaseAmountDraft) > 0;
+    const isAdding = !editingPurchaseId;
     return (
       <>
         <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:20 }}>
-          <button onClick={() => setMode("view")} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.3)", fontSize:22, cursor:"pointer", padding:0, fontFamily:"inherit" }}>←</button>
-          <p style={{ color:"rgba(255,255,255,0.4)", fontSize:13, fontWeight:600, margin:0 }}>Editar compra</p>
+          <button onClick={() => { setMode("view"); setPurchaseAmountDraft(""); setEditingPurchaseId(null); }} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.3)", fontSize:22, cursor:"pointer", padding:0, fontFamily:"inherit" }}>←</button>
+          <p style={{ color:"rgba(255,255,255,0.4)", fontSize:13, fontWeight:600, margin:0 }}>{isAdding ? "Agregar compra" : "Editar compra"} · {dateLabel}</p>
         </div>
         <div style={{ background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:20, padding:"18px 20px", marginBottom:20, display:"flex", alignItems:"center", gap:8 }}>
           <span style={{ color:"rgba(255,255,255,0.3)", fontSize:22, fontWeight:700 }}>$</span>
-          <input autoFocus type="number" value={purchaseAmountDraft} onChange={e => setPurchaseAmountDraft(e.target.value)} style={{ background:"none", border:"none", outline:"none", color:"#fff", fontSize:32, fontWeight:900, letterSpacing:"-1px", width:"100%", fontFamily:"inherit" }} />
+          <input autoFocus type="number" placeholder="0" value={purchaseAmountDraft} onChange={e => setPurchaseAmountDraft(e.target.value)} style={{ background:"none", border:"none", outline:"none", color:"#fff", fontSize:32, fontWeight:900, letterSpacing:"-1px", width:"100%", fontFamily:"inherit" }} />
           <span style={{ color:"rgba(255,255,255,0.2)", fontSize:14 }}>COP</span>
         </div>
         {canSave && <p style={{ color:"rgba(255,255,255,0.3)", fontSize:14, textAlign:"center", margin:"0 0 18px" }}>${parseInt(purchaseAmountDraft).toLocaleString("es-CO")} pesos</p>}
-        <button onClick={handleSavePurchase} disabled={!canSave || saving} style={{ ...primaryBtn, opacity:canSave&&!saving?1:0.35, cursor:canSave&&!saving?"pointer":"default" }}>{saving?"Guardando…":"Guardar cambios"}</button>
+        <button onClick={handleSavePurchase} disabled={!canSave || saving} style={{ ...primaryBtn, opacity:canSave&&!saving?1:0.35, cursor:canSave&&!saving?"pointer":"default" }}>{saving?"Guardando…": isAdding ? "Guardar" : "Guardar cambios"}</button>
       </>
     );
   }
@@ -840,7 +873,7 @@ function DayDetailSheet({ dateStr, log, dayPurchases, onDeleteLog, onUpdateLog, 
         <h2 style={{ color:"#fff", fontSize:22, fontWeight:900, margin:0, letterSpacing:"-0.5px" }}>{dateLabel}</h2>
       </div>
 
-      {log && (
+      {log ? (
         <div style={{ background:"rgba(200,245,90,0.06)", border:"1px solid rgba(200,245,90,0.15)", borderRadius:20, padding:"18px", marginBottom:12 }}>
           <p style={{ color:"#C8F55A", fontSize:11, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase", margin:"0 0 12px" }}>Consumo registrado</p>
           <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:14 }}>
@@ -858,11 +891,18 @@ function DayDetailSheet({ dateStr, log, dayPurchases, onDeleteLog, onUpdateLog, 
             <button disabled={saving} onClick={handleDeleteLog} style={{ flex:1, padding:"11px", background:"rgba(255,80,80,0.08)", border:"1px solid rgba(255,80,80,0.18)", borderRadius:12, color:saving?"rgba(255,107,107,0.4)":"#FF6B6B", fontSize:14, fontWeight:600, cursor:saving?"default":"pointer", fontFamily:"inherit" }}>{saving?"Borrando…":"Borrar"}</button>
           </div>
         </div>
+      ) : (
+        <button disabled={saving} onClick={() => { setLogDraft({ moments: [], company: null }); setMode("editLog"); }} style={{ width:"100%", padding:"14px", background:"rgba(200,245,90,0.05)", border:"1px dashed rgba(200,245,90,0.25)", borderRadius:18, color:"rgba(200,245,90,0.6)", fontSize:14, fontWeight:600, cursor:"pointer", marginBottom:12, fontFamily:"inherit" }}>
+          + Agregar consumo
+        </button>
       )}
 
-      {dayPurchases.length > 0 && (
+      {dayPurchases.length > 0 ? (
         <div style={{ background:"rgba(255,255,255,0.03)", border:"1px solid rgba(255,255,255,0.07)", borderRadius:20, padding:"18px" }}>
-          <p style={{ color:"rgba(255,255,255,0.4)", fontSize:11, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase", margin:"0 0 14px" }}>💰 Compra{dayPurchases.length > 1 ? "s" : ""}</p>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+            <p style={{ color:"rgba(255,255,255,0.4)", fontSize:11, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase", margin:0 }}>💰 Compra{dayPurchases.length > 1 ? "s" : ""}</p>
+            <button disabled={saving} onClick={() => { setEditingPurchaseId(null); setPurchaseAmountDraft(""); setMode("editPurchase"); }} style={{ background:"none", border:"none", color:"rgba(200,245,90,0.5)", fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"inherit", padding:0 }}>+ Agregar</button>
+          </div>
           {dayPurchases.map(p => (
             <div key={p.id} style={{ display:"flex", alignItems:"center", gap:10, marginBottom:dayPurchases.length > 1 ? 10 : 0 }}>
               <span style={{ color:"#fff", fontSize:20, fontWeight:900, letterSpacing:"-0.5px", flex:1 }}>{formatCOP(p.amount)}</span>
@@ -871,6 +911,10 @@ function DayDetailSheet({ dateStr, log, dayPurchases, onDeleteLog, onUpdateLog, 
             </div>
           ))}
         </div>
+      ) : (
+        <button disabled={saving} onClick={() => { setEditingPurchaseId(null); setPurchaseAmountDraft(""); setMode("editPurchase"); }} style={{ width:"100%", padding:"14px", background:"rgba(255,255,255,0.03)", border:"1px dashed rgba(255,255,255,0.12)", borderRadius:18, color:"rgba(255,255,255,0.3)", fontSize:14, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>
+          + Agregar compra
+        </button>
       )}
     </>
   );
