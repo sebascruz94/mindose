@@ -253,6 +253,10 @@ export default function Mindose() {
     deleteLog(logs[todayStr]?.id, todayStr);
   }
 
+  async function handleLogout() {
+    await supabase.auth.signOut();
+  }
+
   function navigateTracking(dir) {
     setTrackingDate(prev => {
       let m = prev.month + dir, y = prev.year;
@@ -290,7 +294,7 @@ export default function Mindose() {
           {screen==="signup" && <SignupScreen authForm={authForm} setAuthForm={setAuthForm} authError={authError} authLoading={authLoading} onSignup={handleSignup} setScreen={(s)=>{ setAuthError(""); setScreen(s); }} />}
           {screen==="app" && (
             <>
-              {appView==="home" && <HomeView today={TODAY} smokedToday={smokedToday} todayLog={todayLog} thisMonth={thisMonth} cleanDaysThisWeek={cleanDaysThisWeek} chartData={chartData} openConsume={()=>{setDraft({moments:[],company:null});setModal("consume");}} openPurchase={()=>{setPurchaseDraft("");setModal("purchase");}} removeToday={removeToday} setAppView={setAppView} />}
+              {appView==="home" && <HomeView today={TODAY} smokedToday={smokedToday} todayLog={todayLog} thisMonth={thisMonth} cleanDaysThisWeek={cleanDaysThisWeek} chartData={chartData} openConsume={()=>{setDraft({moments:[],company:null});setModal("consume");}} openPurchase={()=>{setPurchaseDraft("");setModal("purchase");}} removeToday={removeToday} setAppView={setAppView} onLogout={handleLogout} />}
               {appView==="tracking" && <TrackingView trackingDate={trackingDate} trackingStats={trackingStats} trackingCells={trackingCells} logs={logs} purchaseDates={purchaseDates} today={TODAY} navigate={navigateTracking} isCurrentMonth={isTrackingCurrentMonth} setAppView={setAppView} onDayPress={(dateStr) => { setDayDetail(dateStr); setModal("dayDetail"); }} />}
               {appView==="tendencia" && <TendenciaView chartData={chartData} logs={logs} thisMonth={thisMonth} setAppView={setAppView} />}
             </>
@@ -376,7 +380,7 @@ function SignupScreen({ authForm, setAuthForm, authError, authLoading, onSignup,
 }
 
 // ─── HOME ─────────────────────────────────────────────────────────────────────
-function HomeView({ today, smokedToday, todayLog, thisMonth, cleanDaysThisWeek, chartData, openConsume, openPurchase, removeToday, setAppView }) {
+function HomeView({ today, smokedToday, todayLog, thisMonth, cleanDaysThisWeek, chartData, openConsume, openPurchase, removeToday, setAppView, onLogout }) {
   const dayNames = ["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
   const monthNames = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
   const prev = chartData[chartData.length-2];
@@ -384,9 +388,12 @@ function HomeView({ today, smokedToday, todayLog, thisMonth, cleanDaysThisWeek, 
 
   return (
     <div style={{ padding:"20px 24px 0" }}>
-      <div style={{ marginBottom:22 }}>
-        <p style={{ color:"rgba(255,255,255,0.3)", fontSize:13, fontWeight:600, margin:0, letterSpacing:"0.05em", textTransform:"uppercase" }}>{dayNames[today.getDay()]}</p>
-        <h1 style={{ color:"#fff", fontSize:30, fontWeight:900, margin:"3px 0 0", letterSpacing:"-0.8px" }}>{today.getDate()} de {monthNames[today.getMonth()]}</h1>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:22 }}>
+        <div>
+          <p style={{ color:"rgba(255,255,255,0.3)", fontSize:13, fontWeight:600, margin:0, letterSpacing:"0.05em", textTransform:"uppercase" }}>{dayNames[today.getDay()]}</p>
+          <h1 style={{ color:"#fff", fontSize:30, fontWeight:900, margin:"3px 0 0", letterSpacing:"-0.8px" }}>{today.getDate()} de {monthNames[today.getMonth()]}</h1>
+        </div>
+        <button onClick={onLogout} style={{ background:"rgba(255,255,255,0.05)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:12, padding:"8px 14px", color:"rgba(255,255,255,0.3)", fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"inherit", marginTop:4, whiteSpace:"nowrap" }}>Salir</button>
       </div>
 
       {/* Weekly */}
@@ -723,6 +730,7 @@ function DayDetailSheet({ dateStr, log, dayPurchases, onDeleteLog, onUpdateLog, 
   const [logDraft, setLogDraft] = useState(log ? { moments: [...log.moments], company: log.company } : { moments: [], company: null });
   const [editingPurchaseId, setEditingPurchaseId] = useState(null);
   const [purchaseAmountDraft, setPurchaseAmountDraft] = useState("");
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (mode === "view" && !log && dayPurchases.length === 0) onClose();
@@ -743,15 +751,31 @@ function DayDetailSheet({ dateStr, log, dayPurchases, onDeleteLog, onUpdateLog, 
 
   async function handleSaveLog() {
     if (!logDraft.moments.length || !logDraft.company) return;
+    setSaving(true);
     await onUpdateLog(log.id, dateStr, logDraft.moments, logDraft.company);
+    setSaving(false);
     setMode("view");
   }
 
   async function handleSavePurchase() {
     const amt = parseInt(purchaseAmountDraft.replace(/\D/g, ""));
     if (!amt) return;
+    setSaving(true);
     await onUpdatePurchase(editingPurchaseId, amt);
+    setSaving(false);
     setMode("view");
+  }
+
+  async function handleDeleteLog() {
+    setSaving(true);
+    await onDeleteLog(log.id, dateStr);
+    setSaving(false);
+  }
+
+  async function handleDeletePurchase(id) {
+    setSaving(true);
+    await onDeletePurchase(id);
+    setSaving(false);
   }
 
   if (mode === "editLog") {
@@ -785,7 +809,7 @@ function DayDetailSheet({ dateStr, log, dayPurchases, onDeleteLog, onUpdateLog, 
             );
           })}
         </div>
-        <button onClick={handleSaveLog} disabled={!canSave} style={{ ...primaryBtn, opacity:canSave?1:0.35, cursor:canSave?"pointer":"default" }}>Guardar cambios</button>
+        <button onClick={handleSaveLog} disabled={!canSave || saving} style={{ ...primaryBtn, opacity:canSave&&!saving?1:0.35, cursor:canSave&&!saving?"pointer":"default" }}>{saving?"Guardando…":"Guardar cambios"}</button>
       </>
     );
   }
@@ -804,7 +828,7 @@ function DayDetailSheet({ dateStr, log, dayPurchases, onDeleteLog, onUpdateLog, 
           <span style={{ color:"rgba(255,255,255,0.2)", fontSize:14 }}>COP</span>
         </div>
         {canSave && <p style={{ color:"rgba(255,255,255,0.3)", fontSize:14, textAlign:"center", margin:"0 0 18px" }}>${parseInt(purchaseAmountDraft).toLocaleString("es-CO")} pesos</p>}
-        <button onClick={handleSavePurchase} disabled={!canSave} style={{ ...primaryBtn, opacity:canSave?1:0.35, cursor:canSave?"pointer":"default" }}>Guardar cambios</button>
+        <button onClick={handleSavePurchase} disabled={!canSave || saving} style={{ ...primaryBtn, opacity:canSave&&!saving?1:0.35, cursor:canSave&&!saving?"pointer":"default" }}>{saving?"Guardando…":"Guardar cambios"}</button>
       </>
     );
   }
@@ -830,8 +854,8 @@ function DayDetailSheet({ dateStr, log, dayPurchases, onDeleteLog, onUpdateLog, 
             </span>
           </div>
           <div style={{ display:"flex", gap:8 }}>
-            <button onClick={() => { setLogDraft({ moments: [...log.moments], company: log.company }); setMode("editLog"); }} style={{ flex:1, padding:"11px", background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:12, color:"rgba(255,255,255,0.65)", fontSize:14, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>Editar</button>
-            <button onClick={() => onDeleteLog(log.id, dateStr)} style={{ flex:1, padding:"11px", background:"rgba(255,80,80,0.08)", border:"1px solid rgba(255,80,80,0.18)", borderRadius:12, color:"#FF6B6B", fontSize:14, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>Borrar</button>
+            <button disabled={saving} onClick={() => { setLogDraft({ moments: [...log.moments], company: log.company }); setMode("editLog"); }} style={{ flex:1, padding:"11px", background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:12, color:"rgba(255,255,255,0.65)", fontSize:14, fontWeight:600, cursor:saving?"default":"pointer", fontFamily:"inherit", opacity:saving?0.5:1 }}>Editar</button>
+            <button disabled={saving} onClick={handleDeleteLog} style={{ flex:1, padding:"11px", background:"rgba(255,80,80,0.08)", border:"1px solid rgba(255,80,80,0.18)", borderRadius:12, color:saving?"rgba(255,107,107,0.4)":"#FF6B6B", fontSize:14, fontWeight:600, cursor:saving?"default":"pointer", fontFamily:"inherit" }}>{saving?"Borrando…":"Borrar"}</button>
           </div>
         </div>
       )}
@@ -842,8 +866,8 @@ function DayDetailSheet({ dateStr, log, dayPurchases, onDeleteLog, onUpdateLog, 
           {dayPurchases.map(p => (
             <div key={p.id} style={{ display:"flex", alignItems:"center", gap:10, marginBottom:dayPurchases.length > 1 ? 10 : 0 }}>
               <span style={{ color:"#fff", fontSize:20, fontWeight:900, letterSpacing:"-0.5px", flex:1 }}>{formatCOP(p.amount)}</span>
-              <button onClick={() => { setEditingPurchaseId(p.id); setPurchaseAmountDraft(String(p.amount)); setMode("editPurchase"); }} style={{ padding:"8px 14px", background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:10, color:"rgba(255,255,255,0.65)", fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>Editar</button>
-              <button onClick={() => onDeletePurchase(p.id)} style={{ padding:"8px 14px", background:"rgba(255,80,80,0.08)", border:"1px solid rgba(255,80,80,0.18)", borderRadius:10, color:"#FF6B6B", fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>Borrar</button>
+              <button disabled={saving} onClick={() => { setEditingPurchaseId(p.id); setPurchaseAmountDraft(String(p.amount)); setMode("editPurchase"); }} style={{ padding:"8px 14px", background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:10, color:"rgba(255,255,255,0.65)", fontSize:13, fontWeight:600, cursor:saving?"default":"pointer", fontFamily:"inherit", opacity:saving?0.5:1 }}>Editar</button>
+              <button disabled={saving} onClick={() => handleDeletePurchase(p.id)} style={{ padding:"8px 14px", background:"rgba(255,80,80,0.08)", border:"1px solid rgba(255,80,80,0.18)", borderRadius:10, color:saving?"rgba(255,107,107,0.4)":"#FF6B6B", fontSize:13, fontWeight:600, cursor:saving?"default":"pointer", fontFamily:"inherit" }}>{saving?"…":"Borrar"}</button>
             </div>
           ))}
         </div>
