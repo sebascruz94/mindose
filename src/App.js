@@ -67,6 +67,7 @@ export default function Mindose() {
   const [draft, setDraft] = useState({ moments:[], company:null });
   const [purchaseDraft, setPurchaseDraft] = useState("");
   const [trackingDate, setTrackingDate] = useState({ year: TODAY.getFullYear(), month: TODAY.getMonth() });
+  const [dayDetail, setDayDetail] = useState(null);
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => { setTimeout(()=>setMounted(true), 60); }, []);
@@ -214,12 +215,42 @@ export default function Mindose() {
     setModal(null);
   }
 
-  async function removeToday() {
-    const existing = logs[todayStr];
-    if (existing?.id) {
-      await supabase.from('logs').delete().eq('id', existing.id);
+  async function deleteLog(logId, dateStr) {
+    if (logId) await supabase.from('logs').delete().eq('id', logId);
+    setLogs(prev => { const n = {...prev}; delete n[dateStr]; return n; });
+  }
+
+  async function updateLog(logId, dateStr, moments, company) {
+    const { data, error } = await supabase
+      .from('logs')
+      .update({ moments, company })
+      .eq('id', logId)
+      .select()
+      .single();
+    if (!error && data) {
+      setLogs(prev => ({ ...prev, [dateStr]: { smoked: true, moments: data.moments, company: data.company, id: data.id } }));
     }
-    setLogs(prev => { const n={...prev}; delete n[todayStr]; return n; });
+  }
+
+  async function deletePurchase(purchaseId) {
+    await supabase.from('purchases').delete().eq('id', purchaseId);
+    setPurchases(prev => prev.filter(p => p.id !== purchaseId));
+  }
+
+  async function updatePurchase(purchaseId, amount) {
+    const { data, error } = await supabase
+      .from('purchases')
+      .update({ amount })
+      .eq('id', purchaseId)
+      .select()
+      .single();
+    if (!error && data) {
+      setPurchases(prev => prev.map(p => p.id === purchaseId ? { ...p, amount: data.amount } : p));
+    }
+  }
+
+  async function removeToday() {
+    deleteLog(logs[todayStr]?.id, todayStr);
   }
 
   function navigateTracking(dir) {
@@ -260,7 +291,7 @@ export default function Mindose() {
           {screen==="app" && (
             <>
               {appView==="home" && <HomeView today={TODAY} smokedToday={smokedToday} todayLog={todayLog} thisMonth={thisMonth} cleanDaysThisWeek={cleanDaysThisWeek} chartData={chartData} openConsume={()=>{setDraft({moments:[],company:null});setModal("consume");}} openPurchase={()=>{setPurchaseDraft("");setModal("purchase");}} removeToday={removeToday} setAppView={setAppView} />}
-              {appView==="tracking" && <TrackingView trackingDate={trackingDate} trackingStats={trackingStats} trackingCells={trackingCells} logs={logs} purchaseDates={purchaseDates} today={TODAY} navigate={navigateTracking} isCurrentMonth={isTrackingCurrentMonth} setAppView={setAppView} />}
+              {appView==="tracking" && <TrackingView trackingDate={trackingDate} trackingStats={trackingStats} trackingCells={trackingCells} logs={logs} purchaseDates={purchaseDates} today={TODAY} navigate={navigateTracking} isCurrentMonth={isTrackingCurrentMonth} setAppView={setAppView} onDayPress={(dateStr) => { setDayDetail(dateStr); setModal("dayDetail"); }} />}
               {appView==="tendencia" && <TendenciaView chartData={chartData} logs={logs} thisMonth={thisMonth} setAppView={setAppView} />}
             </>
           )}
@@ -280,6 +311,20 @@ export default function Mindose() {
 
       {modal==="consume" && <BottomSheet onClose={()=>setModal(null)}><ConsumeModal draft={draft} toggleMoment={toggleMoment} setDraft={setDraft} confirmConsume={confirmConsume} /></BottomSheet>}
       {modal==="purchase" && <BottomSheet onClose={()=>setModal(null)}><PurchaseModal value={purchaseDraft} setValue={setPurchaseDraft} confirm={confirmPurchase} /></BottomSheet>}
+      {modal==="dayDetail" && dayDetail && (
+        <BottomSheet onClose={()=>{ setModal(null); setDayDetail(null); }}>
+          <DayDetailSheet
+            dateStr={dayDetail}
+            log={logs[dayDetail]}
+            dayPurchases={purchases.filter(p => p.date === dayDetail)}
+            onDeleteLog={deleteLog}
+            onUpdateLog={updateLog}
+            onDeletePurchase={deletePurchase}
+            onUpdatePurchase={updatePurchase}
+            onClose={()=>{ setModal(null); setDayDetail(null); }}
+          />
+        </BottomSheet>
+      )}
     </div>
   );
 }
@@ -441,7 +486,7 @@ function MiniBar({ data }) {
 }
 
 // ─── TRACKING ─────────────────────────────────────────────────────────────────
-function TrackingView({ trackingDate, trackingStats, trackingCells, logs, purchaseDates, today, navigate, isCurrentMonth, setAppView }) {
+function TrackingView({ trackingDate, trackingStats, trackingCells, logs, purchaseDates, today, navigate, isCurrentMonth, setAppView, onDayPress }) {
   const { year, month } = trackingDate;
   const todayStr = today.toDateString();
 
@@ -492,8 +537,9 @@ function TrackingView({ trackingDate, trackingStats, trackingCells, logs, purcha
           const isFuture = date > today;
           const mainColor = log ? MOMENT_CONFIG[log.moments?.[0]]?.color || "#C8F55A" : null;
 
+          const hasData = (!!log || hasPurchase) && !isFuture;
           return (
-            <div key={i} style={{ aspectRatio:"1", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", borderRadius:12, background:log?`${mainColor}18`:isToday?"rgba(255,255,255,0.07)":"transparent", border:isToday?"1px solid rgba(255,255,255,0.18)":log?`1px solid ${mainColor}35`:"1px solid transparent", gap:1 }}>
+            <div key={i} onClick={hasData ? () => onDayPress(date.toDateString()) : undefined} style={{ aspectRatio:"1", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", borderRadius:12, background:log?`${mainColor}18`:isToday?"rgba(255,255,255,0.07)":"transparent", border:isToday?"1px solid rgba(255,255,255,0.18)":log?`1px solid ${mainColor}35`:"1px solid transparent", gap:1, cursor:hasData?"pointer":"default", transition:"opacity 0.15s", WebkitTapHighlightColor:"transparent" }}>
               <span style={{ fontSize:13, fontWeight:isToday?800:500, color:isFuture?"rgba(255,255,255,0.1)":log?mainColor:"rgba(255,255,255,0.55)" }}>{day}</span>
               {hasPurchase && <span style={{ fontSize:6, lineHeight:1 }}>💰</span>}
               {log && log.moments?.length > 1 && <span style={{ fontSize:6, color:mainColor, lineHeight:1 }}>●●</span>}
@@ -667,6 +713,141 @@ function PurchaseModal({ value, setValue, confirm }) {
       </div>
       {value && parseInt(value)>0 && <p style={{ color:"rgba(255,255,255,0.3)", fontSize:14, textAlign:"center", margin:"0 0 18px" }}>${parseInt(value).toLocaleString("es-CO")} pesos</p>}
       <button onClick={confirm} disabled={!value||parseInt(value)<=0} style={{ ...primaryBtn, opacity:value&&parseInt(value)>0?1:0.35, cursor:value&&parseInt(value)>0?"pointer":"default" }}>Guardar compra</button>
+    </>
+  );
+}
+
+// ─── DAY DETAIL SHEET ─────────────────────────────────────────────────────────
+function DayDetailSheet({ dateStr, log, dayPurchases, onDeleteLog, onUpdateLog, onDeletePurchase, onUpdatePurchase, onClose }) {
+  const [mode, setMode] = useState("view");
+  const [logDraft, setLogDraft] = useState(log ? { moments: [...log.moments], company: log.company } : { moments: [], company: null });
+  const [editingPurchaseId, setEditingPurchaseId] = useState(null);
+  const [purchaseAmountDraft, setPurchaseAmountDraft] = useState("");
+
+  useEffect(() => {
+    if (mode === "view" && !log && dayPurchases.length === 0) onClose();
+  }, [log, dayPurchases, mode]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (log) setLogDraft({ moments: [...log.moments], company: log.company });
+  }, [log]);
+
+  const dateObj = new Date(dateStr);
+  const DAY_NAMES = ["Domingo","Lunes","Martes","Miércoles","Jueves","Viernes","Sábado"];
+  const MONTH_NAMES = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
+  const dateLabel = `${DAY_NAMES[dateObj.getDay()]}, ${dateObj.getDate()} de ${MONTH_NAMES[dateObj.getMonth()]}`;
+
+  function toggleLogMoment(m) {
+    setLogDraft(d => ({ ...d, moments: d.moments.includes(m) ? d.moments.filter(x => x !== m) : [...d.moments, m] }));
+  }
+
+  async function handleSaveLog() {
+    if (!logDraft.moments.length || !logDraft.company) return;
+    await onUpdateLog(log.id, dateStr, logDraft.moments, logDraft.company);
+    setMode("view");
+  }
+
+  async function handleSavePurchase() {
+    const amt = parseInt(purchaseAmountDraft.replace(/\D/g, ""));
+    if (!amt) return;
+    await onUpdatePurchase(editingPurchaseId, amt);
+    setMode("view");
+  }
+
+  if (mode === "editLog") {
+    const canSave = logDraft.moments.length > 0 && logDraft.company;
+    return (
+      <>
+        <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:20 }}>
+          <button onClick={() => setMode("view")} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.3)", fontSize:22, cursor:"pointer", padding:0, fontFamily:"inherit" }}>←</button>
+          <p style={{ color:"rgba(255,255,255,0.4)", fontSize:13, fontWeight:600, margin:0 }}>Editar consumo · {dateLabel}</p>
+        </div>
+        <div style={{ display:"flex", flexDirection:"column", gap:8, marginBottom:18 }}>
+          {Object.entries(MOMENT_CONFIG).map(([key, cfg]) => {
+            const sel = logDraft.moments.includes(key);
+            return (
+              <button key={key} onClick={() => toggleLogMoment(key)} style={{ padding:"14px 18px", borderRadius:16, cursor:"pointer", background:sel?`${cfg.color}15`:"rgba(255,255,255,0.04)", border:sel?`1px solid ${cfg.color}50`:"1px solid rgba(255,255,255,0.07)", color:sel?cfg.color:"rgba(255,255,255,0.7)", fontSize:15, fontWeight:600, display:"flex", alignItems:"center", gap:12, textAlign:"left", transition:"all 0.15s", fontFamily:"inherit" }}>
+                <span style={{ fontSize:20 }}>{cfg.emoji}</span>
+                <span>{cfg.label}</span>
+                {sel && <span style={{ marginLeft:"auto" }}>✓</span>}
+              </button>
+            );
+          })}
+        </div>
+        <p style={{ color:"rgba(255,255,255,0.3)", fontSize:11, fontWeight:700, letterSpacing:"0.07em", textTransform:"uppercase", margin:"0 0 10px" }}>¿Con quién?</p>
+        <div style={{ display:"flex", gap:8, marginBottom:22 }}>
+          {[{key:"solo",emoji:"🧘",label:"Solo"},{key:"acompañado",emoji:"👥",label:"Acompañado"}].map(opt => {
+            const sel = logDraft.company === opt.key;
+            return (
+              <button key={opt.key} onClick={() => setLogDraft(d => ({...d, company: opt.key}))} style={{ flex:1, padding:"14px", borderRadius:14, cursor:"pointer", background:sel?"rgba(200,245,90,0.12)":"rgba(255,255,255,0.04)", border:sel?"1px solid rgba(200,245,90,0.3)":"1px solid rgba(255,255,255,0.07)", color:sel?"#C8F55A":"rgba(255,255,255,0.5)", fontSize:14, fontWeight:700, transition:"all 0.15s", fontFamily:"inherit" }}>
+                {opt.emoji} {opt.label}
+              </button>
+            );
+          })}
+        </div>
+        <button onClick={handleSaveLog} disabled={!canSave} style={{ ...primaryBtn, opacity:canSave?1:0.35, cursor:canSave?"pointer":"default" }}>Guardar cambios</button>
+      </>
+    );
+  }
+
+  if (mode === "editPurchase") {
+    const canSave = purchaseAmountDraft && parseInt(purchaseAmountDraft) > 0;
+    return (
+      <>
+        <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:20 }}>
+          <button onClick={() => setMode("view")} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.3)", fontSize:22, cursor:"pointer", padding:0, fontFamily:"inherit" }}>←</button>
+          <p style={{ color:"rgba(255,255,255,0.4)", fontSize:13, fontWeight:600, margin:0 }}>Editar compra</p>
+        </div>
+        <div style={{ background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:20, padding:"18px 20px", marginBottom:20, display:"flex", alignItems:"center", gap:8 }}>
+          <span style={{ color:"rgba(255,255,255,0.3)", fontSize:22, fontWeight:700 }}>$</span>
+          <input autoFocus type="number" value={purchaseAmountDraft} onChange={e => setPurchaseAmountDraft(e.target.value)} style={{ background:"none", border:"none", outline:"none", color:"#fff", fontSize:32, fontWeight:900, letterSpacing:"-1px", width:"100%", fontFamily:"inherit" }} />
+          <span style={{ color:"rgba(255,255,255,0.2)", fontSize:14 }}>COP</span>
+        </div>
+        {canSave && <p style={{ color:"rgba(255,255,255,0.3)", fontSize:14, textAlign:"center", margin:"0 0 18px" }}>${parseInt(purchaseAmountDraft).toLocaleString("es-CO")} pesos</p>}
+        <button onClick={handleSavePurchase} disabled={!canSave} style={{ ...primaryBtn, opacity:canSave?1:0.35, cursor:canSave?"pointer":"default" }}>Guardar cambios</button>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <div style={{ marginBottom:20 }}>
+        <p style={{ color:"rgba(255,255,255,0.3)", fontSize:11, fontWeight:700, letterSpacing:"0.05em", textTransform:"uppercase", margin:"0 0 4px" }}>Detalle del día</p>
+        <h2 style={{ color:"#fff", fontSize:22, fontWeight:900, margin:0, letterSpacing:"-0.5px" }}>{dateLabel}</h2>
+      </div>
+
+      {log && (
+        <div style={{ background:"rgba(200,245,90,0.06)", border:"1px solid rgba(200,245,90,0.15)", borderRadius:20, padding:"18px", marginBottom:12 }}>
+          <p style={{ color:"#C8F55A", fontSize:11, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase", margin:"0 0 12px" }}>Consumo registrado</p>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:14 }}>
+            {log.moments.map(m => (
+              <span key={m} style={{ background:"rgba(255,255,255,0.06)", borderRadius:10, padding:"5px 12px", color:"rgba(255,255,255,0.7)", fontSize:13, fontWeight:600 }}>
+                {MOMENT_CONFIG[m].emoji} {MOMENT_CONFIG[m].label}
+              </span>
+            ))}
+            <span style={{ background:"rgba(255,255,255,0.06)", borderRadius:10, padding:"5px 12px", color:"rgba(255,255,255,0.7)", fontSize:13, fontWeight:600 }}>
+              {log.company === "solo" ? "🧘 Solo" : "👥 Acompañado"}
+            </span>
+          </div>
+          <div style={{ display:"flex", gap:8 }}>
+            <button onClick={() => { setLogDraft({ moments: [...log.moments], company: log.company }); setMode("editLog"); }} style={{ flex:1, padding:"11px", background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:12, color:"rgba(255,255,255,0.65)", fontSize:14, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>Editar</button>
+            <button onClick={() => onDeleteLog(log.id, dateStr)} style={{ flex:1, padding:"11px", background:"rgba(255,80,80,0.08)", border:"1px solid rgba(255,80,80,0.18)", borderRadius:12, color:"#FF6B6B", fontSize:14, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>Borrar</button>
+          </div>
+        </div>
+      )}
+
+      {dayPurchases.length > 0 && (
+        <div style={{ background:"rgba(255,255,255,0.03)", border:"1px solid rgba(255,255,255,0.07)", borderRadius:20, padding:"18px" }}>
+          <p style={{ color:"rgba(255,255,255,0.4)", fontSize:11, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase", margin:"0 0 14px" }}>💰 Compra{dayPurchases.length > 1 ? "s" : ""}</p>
+          {dayPurchases.map(p => (
+            <div key={p.id} style={{ display:"flex", alignItems:"center", gap:10, marginBottom:dayPurchases.length > 1 ? 10 : 0 }}>
+              <span style={{ color:"#fff", fontSize:20, fontWeight:900, letterSpacing:"-0.5px", flex:1 }}>{formatCOP(p.amount)}</span>
+              <button onClick={() => { setEditingPurchaseId(p.id); setPurchaseAmountDraft(String(p.amount)); setMode("editPurchase"); }} style={{ padding:"8px 14px", background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:10, color:"rgba(255,255,255,0.65)", fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>Editar</button>
+              <button onClick={() => onDeletePurchase(p.id)} style={{ padding:"8px 14px", background:"rgba(255,80,80,0.08)", border:"1px solid rgba(255,80,80,0.18)", borderRadius:10, color:"#FF6B6B", fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"inherit" }}>Borrar</button>
+            </div>
+          ))}
+        </div>
+      )}
     </>
   );
 }
