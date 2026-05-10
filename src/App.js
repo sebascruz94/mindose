@@ -57,9 +57,6 @@ const primaryBtn = { width:"100%", padding:"17px", background:"#C8F55A", border:
 export default function Mindose() {
   const [screen, setScreen] = useState("loading");
   const [user, setUser] = useState(null);
-  const [authForm, setAuthForm] = useState({ email:"", password:"", name:"" });
-  const [authError, setAuthError] = useState("");
-  const [authLoading, setAuthLoading] = useState(false);
   const [appView, setAppView] = useState("home");
   const [logs, setLogs] = useState({});
   const [purchases, setPurchases] = useState([]);
@@ -131,28 +128,6 @@ export default function Mindose() {
     }
   }
 
-  async function handleLogin() {
-    setAuthError("");
-    setAuthLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({
-      email: authForm.email,
-      password: authForm.password,
-    });
-    setAuthLoading(false);
-    if (error) setAuthError(error.message);
-  }
-
-  async function handleSignup() {
-    setAuthError("");
-    setAuthLoading(true);
-    const { error } = await supabase.auth.signUp({
-      email: authForm.email,
-      password: authForm.password,
-      options: { data: { name: authForm.name } },
-    });
-    setAuthLoading(false);
-    if (error) setAuthError(error.message);
-  }
 
   const todayStr = TODAY.toDateString();
   const todayLog = logs[todayStr];
@@ -314,8 +289,8 @@ export default function Mindose() {
               <span style={{ color:"rgba(255,255,255,0.2)", fontSize:14 }}>Cargando…</span>
             </div>
           )}
-          {screen==="login" && <LoginScreen authForm={authForm} setAuthForm={setAuthForm} authError={authError} authLoading={authLoading} onLogin={handleLogin} setScreen={(s)=>{ setAuthError(""); setScreen(s); }} />}
-          {screen==="signup" && <SignupScreen authForm={authForm} setAuthForm={setAuthForm} authError={authError} authLoading={authLoading} onSignup={handleSignup} setScreen={(s)=>{ setAuthError(""); setScreen(s); }} />}
+          {screen==="login" && <LoginScreen setScreen={setScreen} />}
+          {screen==="signup" && <SignupScreen setScreen={setScreen} />}
           {screen==="app" && (
             <>
               {appView==="home" && <HomeView today={TODAY} smokedToday={smokedToday} todayLog={todayLog} thisMonth={thisMonth} cleanDaysThisWeek={cleanDaysThisWeek} chartData={chartData} openConsume={()=>{setDraft({moments:[],company:null});setModal("consume");}} openPurchase={()=>{setPurchaseDraft("");setModal("purchase");}} removeToday={removeToday} setAppView={setAppView} onLogout={handleLogout} />}
@@ -360,7 +335,43 @@ export default function Mindose() {
 }
 
 // ─── AUTH ─────────────────────────────────────────────────────────────────────
-function LoginScreen({ authForm, setAuthForm, authError, authLoading, onLogin, setScreen }) {
+const inputErr = { ...inputStyle, border:"1px solid rgba(255,107,107,0.4)" };
+const errText = { color:"#FF6B6B", fontSize:12, margin:"5px 0 0 4px", fontWeight:500 };
+
+function FieldError({ msg }) {
+  if (!msg) return null;
+  return <p style={errText}>{msg}</p>;
+}
+
+function LoginScreen({ setScreen }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [errors, setErrors] = useState({});
+  const [loading, setLoading] = useState(false);
+
+  async function handleSubmit() {
+    const errs = {};
+    if (!email.trim()) errs.email = "Ingresa tu correo";
+    if (!password) errs.password = "Ingresa tu contraseña";
+    if (Object.keys(errs).length) { setErrors(errs); return; }
+
+    setLoading(true);
+    setErrors({});
+    const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+    setLoading(false);
+
+    if (error) {
+      if (error.message.toLowerCase().includes("invalid login credentials") ||
+          error.message.toLowerCase().includes("invalid email or password")) {
+        setErrors({ password: "Email o contraseña incorrectos" });
+      } else if (error.message.toLowerCase().includes("email not confirmed")) {
+        setErrors({ general: "Confirma tu correo antes de entrar" });
+      } else {
+        setErrors({ general: error.message });
+      }
+    }
+  }
+
   return (
     <div style={{ flex:1, display:"flex", flexDirection:"column", justifyContent:"center", padding:"0 32px", minHeight:760 }}>
       <div style={{ marginBottom:48 }}>
@@ -370,37 +381,159 @@ function LoginScreen({ authForm, setAuthForm, authError, authLoading, onLogin, s
         <h1 style={{ color:"#fff", fontSize:42, fontWeight:900, margin:0, letterSpacing:"-2px" }}>Mindose</h1>
         <p style={{ color:"rgba(255,255,255,0.3)", fontSize:15, margin:"8px 0 0" }}>Control consciente de tu consumo.</p>
       </div>
-      <div style={{ display:"flex", flexDirection:"column", gap:12, marginBottom:24 }}>
-        <input placeholder="Correo" value={authForm.email} onChange={e=>setAuthForm(f=>({...f,email:e.target.value}))} style={inputStyle} />
-        <input placeholder="Contraseña" type="password" value={authForm.password} onChange={e=>setAuthForm(f=>({...f,password:e.target.value}))} onKeyDown={e=>e.key==="Enter"&&onLogin()} style={inputStyle} />
+
+      <div style={{ display:"flex", flexDirection:"column", gap:4, marginBottom:12 }}>
+        <input
+          placeholder="Correo"
+          value={email}
+          onChange={e => { setEmail(e.target.value); setErrors(v => ({...v, email:null, general:null})); }}
+          style={errors.email ? inputErr : inputStyle}
+        />
+        <FieldError msg={errors.email} />
       </div>
-      {authError && <p style={{ color:"#FF6B6B", fontSize:13, margin:"0 0 14px", textAlign:"center" }}>{authError}</p>}
-      <button onClick={onLogin} disabled={authLoading} style={{ ...primaryBtn, opacity:authLoading?0.6:1 }}>{authLoading?"Entrando…":"Entrar"}</button>
-      <button onClick={()=>setScreen("signup")} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.35)", fontSize:14, cursor:"pointer", marginTop:20, padding:8, fontFamily:"inherit" }}>
+      <div style={{ display:"flex", flexDirection:"column", gap:4, marginBottom:errors.password||errors.general ? 8 : 24 }}>
+        <input
+          placeholder="Contraseña"
+          type="password"
+          value={password}
+          onChange={e => { setPassword(e.target.value); setErrors(v => ({...v, password:null, general:null})); }}
+          onKeyDown={e => e.key==="Enter" && handleSubmit()}
+          style={errors.password ? inputErr : inputStyle}
+        />
+        <FieldError msg={errors.password} />
+        <FieldError msg={errors.general} />
+      </div>
+      {(errors.password || errors.general) && <div style={{ height:16 }} />}
+
+      <button onClick={handleSubmit} disabled={loading} style={{ ...primaryBtn, opacity:loading?0.7:1 }}>
+        {loading ? (
+          <span style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+            <span style={{ width:14, height:14, border:"2px solid rgba(0,0,0,0.3)", borderTop:"2px solid #0A0A0A", borderRadius:"50%", display:"inline-block", animation:"spin 0.7s linear infinite" }} />
+            Entrando…
+          </span>
+        ) : "Entrar"}
+      </button>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+
+      <button onClick={() => setScreen("signup")} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.35)", fontSize:14, cursor:"pointer", marginTop:20, padding:8, fontFamily:"inherit" }}>
         ¿No tienes cuenta? <span style={{ color:"#C8F55A", fontWeight:700 }}>Créala aquí</span>
       </button>
     </div>
   );
 }
 
-function SignupScreen({ authForm, setAuthForm, authError, authLoading, onSignup, setScreen }) {
+function SignupScreen({ setScreen }) {
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [errors, setErrors] = useState({});
+  const [loading, setLoading] = useState(false);
+  const [success, setSuccess] = useState(false);
+
+  async function handleSubmit() {
+    const errs = {};
+    if (!name.trim()) errs.name = "Ingresa tu nombre";
+    if (!email.trim()) {
+      errs.email = "Ingresa tu correo";
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      errs.email = "Correo no válido";
+    }
+    if (!password) {
+      errs.password = "Ingresa una contraseña";
+    } else if (password.length < 6) {
+      errs.password = "Mínimo 6 caracteres";
+    }
+    if (Object.keys(errs).length) { setErrors(errs); return; }
+
+    setLoading(true);
+    setErrors({});
+    const { data, error } = await supabase.auth.signUp({
+      email: email.trim(),
+      password,
+      options: { data: { name: name.trim() } },
+    });
+    setLoading(false);
+
+    if (error) {
+      const msg = error.message.toLowerCase();
+      if (msg.includes("already registered") || msg.includes("already been registered") || msg.includes("user already exists")) {
+        setErrors({ email: "Este correo ya tiene una cuenta" });
+      } else if (msg.includes("password")) {
+        setErrors({ password: "Mínimo 6 caracteres" });
+      } else if (msg.includes("email") || msg.includes("invalid format")) {
+        setErrors({ email: "Correo no válido" });
+      } else {
+        setErrors({ general: error.message });
+      }
+    } else if (!data.session) {
+      setSuccess(true);
+    }
+    // si hay session, onAuthStateChange en root redirige automáticamente
+  }
+
+  if (success) {
+    return (
+      <div style={{ flex:1, display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", padding:"0 32px", minHeight:760, textAlign:"center" }}>
+        <div style={{ width:64, height:64, background:"rgba(200,245,90,0.12)", border:"1px solid rgba(200,245,90,0.3)", borderRadius:20, display:"flex", alignItems:"center", justifyContent:"center", marginBottom:24, fontSize:28 }}>✉️</div>
+        <h2 style={{ color:"#fff", fontSize:26, fontWeight:900, margin:"0 0 10px", letterSpacing:"-0.5px" }}>Revisa tu correo</h2>
+        <p style={{ color:"rgba(255,255,255,0.4)", fontSize:15, margin:"0 0 6px", lineHeight:1.5 }}>Te enviamos un link de confirmación a</p>
+        <p style={{ color:"#C8F55A", fontSize:15, fontWeight:700, margin:"0 0 36px" }}>{email}</p>
+        <button onClick={() => setScreen("login")} style={{ ...primaryBtn, maxWidth:220 }}>Ir al inicio</button>
+      </div>
+    );
+  }
+
   return (
     <div style={{ flex:1, display:"flex", flexDirection:"column", justifyContent:"center", padding:"0 32px", minHeight:760 }}>
-      <button onClick={()=>setScreen("login")} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.3)", fontSize:22, cursor:"pointer", padding:0, marginBottom:28, textAlign:"left", fontFamily:"inherit" }}>←</button>
-      <div style={{ marginBottom:40 }}>
+      <button onClick={() => setScreen("login")} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.3)", fontSize:22, cursor:"pointer", padding:0, marginBottom:28, textAlign:"left", fontFamily:"inherit" }}>←</button>
+      <div style={{ marginBottom:36 }}>
         <div style={{ width:52, height:52, background:"#C8F55A", borderRadius:16, display:"flex", alignItems:"center", justifyContent:"center", marginBottom:20 }}>
           <span style={{ fontSize:26 }}>◎</span>
         </div>
         <h1 style={{ color:"#fff", fontSize:34, fontWeight:900, margin:0, letterSpacing:"-1px" }}>Crear cuenta</h1>
         <p style={{ color:"rgba(255,255,255,0.3)", fontSize:14, margin:"6px 0 0" }}>Tu información es privada y solo tuya.</p>
       </div>
-      <div style={{ display:"flex", flexDirection:"column", gap:12, marginBottom:24 }}>
-        <input placeholder="Tu nombre" value={authForm.name} onChange={e=>setAuthForm(f=>({...f,name:e.target.value}))} style={inputStyle} />
-        <input placeholder="Correo" value={authForm.email} onChange={e=>setAuthForm(f=>({...f,email:e.target.value}))} style={inputStyle} />
-        <input placeholder="Contraseña" type="password" value={authForm.password} onChange={e=>setAuthForm(f=>({...f,password:e.target.value}))} style={inputStyle} />
+
+      <div style={{ display:"flex", flexDirection:"column", gap:4, marginBottom:12 }}>
+        <input
+          placeholder="Tu nombre"
+          value={name}
+          onChange={e => { setName(e.target.value); setErrors(v => ({...v, name:null})); }}
+          style={errors.name ? inputErr : inputStyle}
+        />
+        <FieldError msg={errors.name} />
       </div>
-      {authError && <p style={{ color:"#FF6B6B", fontSize:13, margin:"0 0 14px", textAlign:"center" }}>{authError}</p>}
-      <button onClick={onSignup} disabled={authLoading} style={{ ...primaryBtn, opacity:authLoading?0.6:1 }}>{authLoading?"Creando…":"Crear cuenta"}</button>
+      <div style={{ display:"flex", flexDirection:"column", gap:4, marginBottom:12 }}>
+        <input
+          placeholder="Correo"
+          value={email}
+          onChange={e => { setEmail(e.target.value); setErrors(v => ({...v, email:null})); }}
+          style={errors.email ? inputErr : inputStyle}
+        />
+        <FieldError msg={errors.email} />
+      </div>
+      <div style={{ display:"flex", flexDirection:"column", gap:4, marginBottom:errors.password||errors.general ? 8 : 28 }}>
+        <input
+          placeholder="Contraseña (mín. 6 caracteres)"
+          type="password"
+          value={password}
+          onChange={e => { setPassword(e.target.value); setErrors(v => ({...v, password:null})); }}
+          onKeyDown={e => e.key==="Enter" && handleSubmit()}
+          style={errors.password ? inputErr : inputStyle}
+        />
+        <FieldError msg={errors.password} />
+        <FieldError msg={errors.general} />
+      </div>
+      {(errors.password || errors.general) && <div style={{ height:20 }} />}
+
+      <button onClick={handleSubmit} disabled={loading} style={{ ...primaryBtn, opacity:loading?0.7:1 }}>
+        {loading ? (
+          <span style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+            <span style={{ width:14, height:14, border:"2px solid rgba(0,0,0,0.3)", borderTop:"2px solid #0A0A0A", borderRadius:"50%", display:"inline-block", animation:"spin 0.7s linear infinite" }} />
+            Creando cuenta…
+          </span>
+        ) : "Crear cuenta"}
+      </button>
     </div>
   );
 }
