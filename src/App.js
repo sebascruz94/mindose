@@ -70,13 +70,19 @@ export default function Mindose() {
   useEffect(() => { setTimeout(()=>setMounted(true), 60); }, []);
 
   useEffect(() => {
+    const fallback = setTimeout(() => setScreen("login"), 6000);
+
     supabase.auth.getSession().then(({ data: { session } }) => {
+      clearTimeout(fallback);
       if (session?.user) {
         setUser(session.user);
         setScreen("app");
       } else {
         setScreen("login");
       }
+    }).catch(() => {
+      clearTimeout(fallback);
+      setScreen("login");
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
