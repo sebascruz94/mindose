@@ -86,6 +86,10 @@ export default function Mindose() {
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (_event === 'PASSWORD_RECOVERY') {
+        setScreen("resetPassword");
+        return;
+      }
       if (session?.user) {
         setUser(session.user);
         setScreen("app");
@@ -297,6 +301,8 @@ export default function Mindose() {
           )}
           {screen==="login" && <LoginScreen setScreen={setScreen} />}
           {screen==="signup" && <SignupScreen setScreen={setScreen} />}
+          {screen==="forgotPassword" && <ForgotPasswordScreen setScreen={setScreen} />}
+          {screen==="resetPassword" && <SetNewPasswordScreen setScreen={setScreen} />}
           {screen==="app" && (
             <>
               {appView==="home" && <HomeView today={TODAY} smokedToday={smokedToday} todayLog={todayLog} thisMonth={thisMonth} cleanDaysThisWeek={cleanDaysThisWeek} chartData={chartData} openConsume={()=>{setDraft({moments:[],company:null});setModal("consume");}} openPurchase={()=>{setPurchaseDraft("");setModal("purchase");}} removeToday={removeToday} setAppView={setAppView} onLogout={handleLogout} />}
@@ -421,7 +427,10 @@ function LoginScreen({ setScreen }) {
       </button>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
 
-      <button onClick={() => setScreen("signup")} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.35)", fontSize:14, cursor:"pointer", marginTop:20, padding:8, fontFamily:"inherit" }}>
+      <button onClick={() => setScreen("forgotPassword")} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.25)", fontSize:13, cursor:"pointer", marginTop:8, padding:8, fontFamily:"inherit" }}>
+        ¿Olvidaste tu contraseña?
+      </button>
+      <button onClick={() => setScreen("signup")} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.35)", fontSize:14, cursor:"pointer", marginTop:4, padding:8, fontFamily:"inherit" }}>
         ¿No tienes cuenta? <span style={{ color:"#C8F55A", fontWeight:700 }}>Créala aquí</span>
       </button>
     </div>
@@ -539,6 +548,92 @@ function SignupScreen({ setScreen }) {
             Creando cuenta…
           </span>
         ) : "Crear cuenta"}
+      </button>
+    </div>
+  );
+}
+
+function ForgotPasswordScreen({ setScreen }) {
+  const [email, setEmail] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState("");
+
+  async function handleReset() {
+    if (!email.trim()) return;
+    setLoading(true);
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      redirectTo: window.location.origin,
+    });
+    setLoading(false);
+    if (error) { setError(error.message); } else { setSent(true); }
+  }
+
+  if (sent) {
+    return (
+      <div style={{ flex:1, display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", padding:"0 32px", minHeight:760, textAlign:"center" }}>
+        <div style={{ width:64, height:64, background:"rgba(200,245,90,0.12)", border:"1px solid rgba(200,245,90,0.3)", borderRadius:20, display:"flex", alignItems:"center", justifyContent:"center", marginBottom:24, fontSize:28 }}>✉️</div>
+        <h2 style={{ color:"#fff", fontSize:26, fontWeight:900, margin:"0 0 10px", letterSpacing:"-0.5px" }}>Revisa tu correo</h2>
+        <p style={{ color:"rgba(255,255,255,0.4)", fontSize:15, margin:"0 0 6px", lineHeight:1.5 }}>Te enviamos un link para restablecer tu contraseña a</p>
+        <p style={{ color:"#C8F55A", fontSize:15, fontWeight:700, margin:"0 0 36px" }}>{email}</p>
+        <button onClick={() => setScreen("login")} style={{ ...primaryBtn, maxWidth:220 }}>Volver al inicio</button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ flex:1, display:"flex", flexDirection:"column", justifyContent:"center", padding:"0 32px", minHeight:760 }}>
+      <button onClick={() => setScreen("login")} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.3)", fontSize:22, cursor:"pointer", padding:0, marginBottom:28, textAlign:"left", fontFamily:"inherit" }}>←</button>
+      <div style={{ marginBottom:36 }}>
+        <div style={{ width:52, height:52, background:"#C8F55A", borderRadius:16, display:"flex", alignItems:"center", justifyContent:"center", marginBottom:20 }}>
+          <span style={{ fontSize:26 }}>🔑</span>
+        </div>
+        <h1 style={{ color:"#fff", fontSize:34, fontWeight:900, margin:0, letterSpacing:"-1px" }}>Recuperar acceso</h1>
+        <p style={{ color:"rgba(255,255,255,0.3)", fontSize:14, margin:"6px 0 0" }}>Te enviamos un link para crear una nueva contraseña.</p>
+      </div>
+      <input placeholder="Tu correo" value={email} onChange={e => { setEmail(e.target.value); setError(""); }} style={error ? inputErr : inputStyle} onKeyDown={e => e.key==="Enter" && handleReset()} />
+      {error && <p style={errText}>{error}</p>}
+      <div style={{ height:20 }} />
+      <button onClick={handleReset} disabled={loading || !email.trim()} style={{ ...primaryBtn, opacity:loading||!email.trim()?0.5:1 }}>
+        {loading ? "Enviando…" : "Enviar link"}
+      </button>
+    </div>
+  );
+}
+
+function SetNewPasswordScreen({ setScreen }) {
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  async function handleUpdate() {
+    if (password.length < 6) { setError("Mínimo 6 caracteres"); return; }
+    if (password !== confirm) { setError("Las contraseñas no coinciden"); return; }
+    setLoading(true);
+    const { error } = await supabase.auth.updateUser({ password });
+    setLoading(false);
+    if (error) { setError(error.message); } else { setScreen("login"); }
+  }
+
+  return (
+    <div style={{ flex:1, display:"flex", flexDirection:"column", justifyContent:"center", padding:"0 32px", minHeight:760 }}>
+      <div style={{ marginBottom:36 }}>
+        <div style={{ width:52, height:52, background:"#C8F55A", borderRadius:16, display:"flex", alignItems:"center", justifyContent:"center", marginBottom:20 }}>
+          <span style={{ fontSize:26 }}>🔐</span>
+        </div>
+        <h1 style={{ color:"#fff", fontSize:34, fontWeight:900, margin:0, letterSpacing:"-1px" }}>Nueva contraseña</h1>
+        <p style={{ color:"rgba(255,255,255,0.3)", fontSize:14, margin:"6px 0 0" }}>Elige una contraseña segura.</p>
+      </div>
+      <div style={{ display:"flex", flexDirection:"column", gap:4, marginBottom:12 }}>
+        <input placeholder="Nueva contraseña" type="password" value={password} onChange={e => { setPassword(e.target.value); setError(""); }} style={error ? inputErr : inputStyle} />
+      </div>
+      <div style={{ display:"flex", flexDirection:"column", gap:4, marginBottom:error?8:24 }}>
+        <input placeholder="Confirmar contraseña" type="password" value={confirm} onChange={e => { setConfirm(e.target.value); setError(""); }} style={error ? inputErr : inputStyle} onKeyDown={e => e.key==="Enter" && handleUpdate()} />
+        {error && <p style={errText}>{error}</p>}
+      </div>
+      <button onClick={handleUpdate} disabled={loading} style={{ ...primaryBtn, opacity:loading?0.7:1 }}>
+        {loading ? "Guardando…" : "Cambiar contraseña"}
       </button>
     </div>
   );
